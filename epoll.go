@@ -15,6 +15,8 @@
 package epoll
 
 import (
+	"context"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -36,19 +38,19 @@ func (i *Instance) Add(fd int, ev *unix.EpollEvent) (err error) {
 	return
 }
 
-// Change the settings associated with [fd] in the interest list to the new settings specified in [unix.EpollEvent]
+// Change the settings associated with file descriptor in the interest list to the new settings specified in [unix.EpollEvent]
 func (i *Instance) Mod(fd int, ev *unix.EpollEvent) (err error) {
 	err = i.Ctl(unix.EPOLL_CTL_MOD, fd, ev)
 	return
 }
 
-// Remove (deregister the target file descriptor [fd] from the interest list.
+// Remove (deregister the target file descriptor from the interest list.
 func (i *Instance) Del(fd int, ev *unix.EpollEvent) (err error) {
 	err = i.Ctl(unix.EPOLL_CTL_DEL, fd, ev)
 	return
 }
 
-// Control interface for an epoll file descriptor from the interest list. The [ev] event argument is ignored and can be [nil].
+// Control interface for an epoll file descriptor from the interest list. The ev argument is ignored and can be nil.
 func (i *Instance) Ctl(op, fd int, ev *unix.EpollEvent) (err error) {
 	err = unix.EpollCtl(i.Fd, op, fd, ev)
 	return
@@ -57,6 +59,28 @@ func (i *Instance) Ctl(op, fd int, ev *unix.EpollEvent) (err error) {
 // Wait for an I/O event on an epoll file descriptor
 func (i *Instance) Wait(events []unix.EpollEvent, timeout int) (n int, err error) {
 	n, err = unix.EpollWait(i.Fd, events, timeout)
+	return
+}
+
+// The same [Instance.Wait] function with [context.Context].
+// If context is cancelled, n will return 0, and err will return [unix.EINTR].
+func (i *Instance) WaitContext(ctx context.Context, events []unix.EpollEvent, timeout int) (n int, err error) {
+	done := make(chan struct{}, 1)
+	go func() {
+		select {
+		case <-ctx.Done():
+			unix.Write(i.Fd, []byte{1, 0, 0, 0, 0, 0, 0, 0})
+		case <-done:
+		}
+	}()
+	n, err = i.Wait(events, timeout)
+
+	if ctx_err := ctx.Err(); ctx_err != nil {
+		n, err = 0, unix.EINTR
+	}
+
+	close(done)
+
 	return
 }
 
